@@ -1,0 +1,1 @@
+A real-time chat server built with Go using WebSocket for handling communication
