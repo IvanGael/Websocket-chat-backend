@@ -1,86 +1,44 @@
 package main
 
 import (
-	"log"
+	"context"
 	"net/http"
-	"time"
-
-	"github.com/gorilla/websocket"
+	"os"
+	"os/signal"
+	"syscall"
 )
 
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
-}
-
-var clients = make(map[*websocket.Conn]bool) // Connected clients
-var broadcast = make(chan Message)           // Channel for broadcasting messages
-
-// Message defines the structure of the messages exchanged
-type Message struct {
-	Username  string `json:"username"`
-	Message   string `json:"message"`
-	Timestamp string `json:"timestamp"`
-	Typing    bool   `json:"typing"` // Indicates if the user is typing
-}
-
 func main() {
-	fs := http.FileServer(http.Dir("./public"))
-	http.Handle("/", fs)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	http.HandleFunc("/ws", HandleConnections)
+	http.Handle("/create-room", corsMiddleware(http.HandlerFunc(createRoom)))
+	http.Handle("/encrypt", corsMiddleware(http.HandlerFunc(handleEncrypt)))
+	http.Handle("/decrypt", corsMiddleware(http.HandlerFunc(handleDecrypt)))
+	http.HandleFunc("/ws", handleConnections)
 
-	// Start the goroutine for handling messages
-	go HandleMessages()
+	go manageRooms(ctx)
 
-	log.Println("Server started on :8080")
-	err := http.ListenAndServe(":8080", nil)
-	if err != nil {
-		log.Fatal("ListenAndServe: ", err)
+	srv := &http.Server{
+		Addr: ":8080",
 	}
-}
 
-// HandleConnections handles new WebSocket requests from clients
-func HandleConnections(w http.ResponseWriter, r *http.Request) {
-	ws, err := upgrader.Upgrade(w, r, nil) // Upgrade HTTP to WebSocket
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer ws.Close() // Close the WebSocket connection when the function returns
-
-	clients[ws] = true // Register the new client
-
-	for {
-		var msg Message
-		// Read a new message as JSON and map it to a Message object
-		err := ws.ReadJSON(&msg)
-		if err != nil {
-			log.Printf("error: %v", err)
-			delete(clients, ws) // Remove the client from the list if there is an error
-			break
+	go func() {
+		logger.Println("Server started on :8080")
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Fatalf("ListenAndServe: %v", err)
 		}
+	}()
 
-		// Add timestamp to the message
-		msg.Timestamp = time.Now().Format(time.RFC3339)
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	logger.Println("Shutting down server...")
 
-		// Send the message to the broadcast channel
-		broadcast <- msg
+	cancel()
+	if err := srv.Shutdown(context.Background()); err != nil {
+		logger.Fatalf("Server shutdown: %v", err)
 	}
-}
 
-// HandleMessages broadcasts incoming messages to all clients
-func HandleMessages() {
-	for {
-		// Get the next message from the broadcast channel
-		msg := <-broadcast
-
-		// Send it to every connected client
-		for client := range clients {
-			err := client.WriteJSON(msg)
-			if err != nil {
-				log.Printf("error: %v", err)
-				client.Close()
-				delete(clients, client)
-			}
-		}
-	}
+	logger.Println("Server exited")
 }
