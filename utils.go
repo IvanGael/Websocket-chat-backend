@@ -4,20 +4,56 @@ import (
 	"crypto/rand"
 	"fmt"
 	"math/big"
-
-	"github.com/rs/xid"
+	"regexp"
+	"strings"
 )
 
 func generateUniqueRoomID() string {
 	for {
-		id := xid.New().String()
+		// Generate 3 parts of lowercase letters
+		part1 := generateRandomLetters(3)
+		part2 := generateRandomLetters(4)
+		part3 := generateRandomLetters(3)
+
+		// Generate random 3-digit number
+		hashNum := generateRandomNumber(100, 999)
+
+		// Combine parts
+		id := fmt.Sprintf("%s-%s-%s?hs=%d", part1, part2, part3, hashNum)
+
 		roomsMutex.RLock()
 		_, exists := rooms[id]
 		roomsMutex.RUnlock()
+
 		if !exists {
 			return id
 		}
 	}
+}
+
+func generateRandomLetters(n int) string {
+	const letters = "abcdefghijklmnopqrstuvwxyz"
+	b := make([]byte, n)
+	for i := range b {
+		randIndex, _ := rand.Int(rand.Reader, big.NewInt(int64(len(letters))))
+		b[i] = letters[randIndex.Int64()]
+	}
+	return string(b)
+}
+
+func generateRandomNumber(min, max int) int {
+	n, _ := rand.Int(rand.Reader, big.NewInt(int64(max-min+1)))
+	return int(n.Int64()) + min
+}
+
+func isValidRoomID(id string) bool {
+	pattern := regexp.MustCompile(`^[a-z]{3}-[a-z]{4}-[a-z]{3}\?hs=[1-9]\d{2}$`)
+	return pattern.MatchString(id)
+}
+
+func extractBaseRoomID(fullRoomID string) string {
+	parts := strings.Split(fullRoomID, "?")
+	return parts[0]
 }
 
 func generateNickname() string {

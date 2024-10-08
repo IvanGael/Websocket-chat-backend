@@ -41,14 +41,21 @@ const (
 )
 
 func handleConnections(w http.ResponseWriter, r *http.Request) {
-	roomID := r.URL.Query().Get("room")
-	if roomID == "" {
+	fullRoomID := r.URL.Query().Get("room")
+	if fullRoomID == "" {
 		http.Error(w, "Room ID is required", http.StatusBadRequest)
 		return
 	}
 
+	if !isValidRoomID(fullRoomID) {
+		http.Error(w, "Invalid Room ID", http.StatusBadRequest)
+		return
+	}
+
+	baseRoomID := extractBaseRoomID(fullRoomID)
+
 	roomsMutex.RLock()
-	room, exists := rooms[roomID]
+	room, exists := rooms[baseRoomID]
 	roomsMutex.RUnlock()
 	if !exists {
 		http.Error(w, "Room not found", http.StatusNotFound)
@@ -79,10 +86,11 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 }
 
 func createRoom(w http.ResponseWriter, r *http.Request) {
-	roomID := generateUniqueRoomID()
+	fullRoomID := generateUniqueRoomID()
+	baseRoomID := extractBaseRoomID(fullRoomID)
 	ctx, cancel := context.WithCancel(context.Background())
 	newRoom := &ChatRoom{
-		id:         roomID,
+		id:         baseRoomID,
 		clients:    make(map[*Client]bool),
 		broadcast:  make(chan Message, 256),
 		join:       make(chan *Client, 10),
@@ -94,13 +102,13 @@ func createRoom(w http.ResponseWriter, r *http.Request) {
 	}
 
 	roomsMutex.Lock()
-	rooms[roomID] = newRoom
+	rooms[baseRoomID] = newRoom
 	roomsMutex.Unlock()
 
 	go newRoom.run()
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"roomID": roomID})
+	json.NewEncoder(w).Encode(map[string]string{"roomID": fullRoomID})
 }
 
 func handleEncrypt(w http.ResponseWriter, r *http.Request) {
